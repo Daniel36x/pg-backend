@@ -134,8 +134,26 @@ Igual que el anterior pero filtrando por `category` en vez de `brand`.
 
 Modifica un producto existente **de forma permanente** (reemplaza todos sus datos), a diferencia de los endpoints de descuento que son temporales y se revierten solos.
 
-- Header requerido: `Authorization: Bearer <token>`
-- Body (`ProductRequestDTO`): mismos campos que la creación — `sku`, `price`, `barCode`, `productName`, `brand`, `weight`, `category` (todos obligatorios).
+- Header requerido: `Authorization: Bearer <token>` (rol `ADMIN`).
+- Body (`ProductRequestDTO`): mismos campos que la creación, todos obligatorios — es un reemplazo completo, no parcial: hay que enviar todos los campos aunque no cambien.
+  ```json
+  {
+    "sku": 123456,
+    "price": 15000,
+    "barCode": 7701234567890,
+    "productName": "Arroz Diana 500g",
+    "brand": "Diana",
+    "weight": 0.5,
+    "category": "Alimentos"
+  }
+  ```
+  - `sku` (Long, `@NotNull`) — código SKU del producto.
+  - `price` (BigDecimal, `@NotNull`) — nuevo precio permanente.
+  - `barCode` (Long, `@NotNull`) — código de barras.
+  - `productName` (String, `@NotBlank`) — nombre del producto.
+  - `brand` (String, `@NotBlank`) — nombre de la marca; si no existe se crea automáticamente.
+  - `weight` (Double, `@NotNull`) — peso.
+  - `category` (String, `@NotBlank`) — nombre de la categoría; si no existe se crea automáticamente.
 - Busca o crea la marca/categoría igual que en la creación.
 - Si el producto tenía una promoción activa, se cancela (`promo=false`, `originalPrice=null`, `promoEndsAt=null`) para que el precio nuevo no sea revertido luego por el job programado de reversión de promociones.
 - Notifica el cambio por MQTT igual que el resto de mutaciones.
