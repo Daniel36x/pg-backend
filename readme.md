@@ -16,8 +16,7 @@ hostname -I
 
 sudo nano /etc/mosquitto/conf.d/default.conf
 
-listener 1883 192.168.110.229
-allow_anonymous true
+listener 1883 192.168.110.229 allow_anonymous true
 
 sudo systemctl restart mosquitto
 
@@ -26,3 +25,7 @@ listener 1883 10.200.166.2
 --------------update-----------
 
 mosquitto_sub -h 192.168.10.89 -p 1883 -t '#' -v
+
+sudo nano /etc/mosquitto/conf.d/default.conf
+
+listener 1883 192.168.110.229 allow_anonymous true

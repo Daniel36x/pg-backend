@@ -12,7 +12,7 @@ public class MqttPub {
     // 👉 AHORA RECIBE EL TÓPICO COMO PARÁMETRO
     public void publicar(String topic, String jsonPayload) {
         try {
-            String broker = "tcp://192.168.10.89";
+            String broker = "tcp://192.168.110.229";
             String clientId = MqttClient.generateClientId();
             IMqttClient client = new MqttClient(broker, clientId);
 

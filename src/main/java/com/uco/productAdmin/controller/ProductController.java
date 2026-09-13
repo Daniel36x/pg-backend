@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -19,15 +20,17 @@ public class ProductController {
 
     private final ProductService productService;
 
-    // 1. Crear el producto (POST)
+    // 1. Crear el producto (POST) - Solo ADMIN
     @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Product> createProduct(@Valid @RequestBody ProductRequestDTO productDTO) {
         Product createdProduct = productService.createProduct(productDTO);
         return new ResponseEntity<>(createdProduct, HttpStatus.CREATED);
     }
 
-    // 2. Aplicar descuento por marca (PATCH)
+    // 2. Aplicar descuento por marca (PATCH) - Solo ADMIN
     @PatchMapping("/discount")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<String> applyDiscount(
             @RequestParam("brand") String brand,
             @RequestParam("percentage") BigDecimal percentage,
@@ -38,8 +41,9 @@ public class ProductController {
                 + " durante " + durationMinutes + " minutos");
     }
 
-    // 3. Aplicar descuento por categoría (PATCH)
+    // 3. Aplicar descuento por categoría (PATCH) - Solo ADMIN
     @PatchMapping("/discount/category")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<String> applyDiscountByCategory(
             @RequestParam("category") String category,
             @RequestParam("percentage") BigDecimal percentage,
@@ -50,15 +54,17 @@ public class ProductController {
                 + " durante " + durationMinutes + " minutos");
     }
 
-    // 4. Obtener todos los productos (GET)
+    // 4. Obtener todos los productos (GET) - ADMIN o USER autenticados
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'USER')")
     public ResponseEntity<List<Product>> getAllProducts() {
         List<Product> products = productService.getAllProducts();
         return ResponseEntity.ok(products);
     }
 
-    // 5. Obtener un producto por ID (GET)
+    // 5. Obtener un producto por ID (GET) - ADMIN o USER autenticados
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'USER')")
     public ResponseEntity<Product> getProductById(@PathVariable("id") Long id) {
         Product product = productService.getProductById(id);
         return ResponseEntity.ok(product);
