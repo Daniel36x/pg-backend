@@ -130,6 +130,17 @@ Aplica un descuento porcentual temporal a todos los productos de una marca.
 
 Igual que el anterior pero filtrando por `category` en vez de `brand`.
 
+### `PUT /api/v1/products/{id}` — requiere rol `ADMIN`
+
+Modifica un producto existente **de forma permanente** (reemplaza todos sus datos), a diferencia de los endpoints de descuento que son temporales y se revierten solos.
+
+- Header requerido: `Authorization: Bearer <token>`
+- Body (`ProductRequestDTO`): mismos campos que la creación — `sku`, `price`, `barCode`, `productName`, `brand`, `weight`, `category` (todos obligatorios).
+- Busca o crea la marca/categoría igual que en la creación.
+- Si el producto tenía una promoción activa, se cancela (`promo=false`, `originalPrice=null`, `promoEndsAt=null`) para que el precio nuevo no sea revertido luego por el job programado de reversión de promociones.
+- Notifica el cambio por MQTT igual que el resto de mutaciones.
+- Respuestas: `200 OK` con el `Product` actualizado; `404` si el ID no existe; `403`/`401` según el caso; `400` si falla la validación.
+
 ### `GET /api/v1/products` — requiere rol `ADMIN` o `USER`
 
 Lista todos los productos. Cualquier usuario autenticado (sin importar el rol) puede consultarlos.

@@ -54,7 +54,17 @@ public class ProductController {
                 + " durante " + durationMinutes + " minutos");
     }
 
-    // 4. Obtener todos los productos (GET) - ADMIN o USER autenticados
+    // 4. Actualizar un producto de forma permanente por ID (PUT) - Solo ADMIN
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Product> updateProduct(
+            @PathVariable("id") Long id,
+            @Valid @RequestBody ProductRequestDTO productDTO) {
+        Product updatedProduct = productService.updateProduct(id, productDTO);
+        return ResponseEntity.ok(updatedProduct);
+    }
+
+    // 5. Obtener todos los productos (GET) - ADMIN o USER autenticados
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'USER')")
     public ResponseEntity<List<Product>> getAllProducts() {
@@ -62,7 +72,7 @@ public class ProductController {
         return ResponseEntity.ok(products);
     }
 
-    // 5. Obtener un producto por ID (GET) - ADMIN o USER autenticados
+    // 6. Obtener un producto por ID (GET) - ADMIN o USER autenticados
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'USER')")
     public ResponseEntity<Product> getProductById(@PathVariable("id") Long id) {

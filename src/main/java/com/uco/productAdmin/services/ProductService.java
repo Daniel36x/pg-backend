@@ -119,6 +119,52 @@ public class ProductService {
         return savedProduct;
     }
 
+    // --- Actualiza un producto existente de forma permanente (reemplaza sus datos) ---
+    @Transactional
+    public Product updateProduct(Long id, ProductRequestDTO dto) {
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("No se encontró el producto con el ID: " + id));
+
+        // 1. Buscar o crear la Marca (Brand)
+        Brand brand = brandRepository.findByName(dto.getBrand())
+                .orElseGet(() -> {
+                    Brand newBrand = new Brand();
+                    newBrand.setName(dto.getBrand());
+                    return brandRepository.save(newBrand);
+                });
+
+        // 2. Buscar o crear la Categoría (Category)
+        Category category = categoryRepository.findByName(dto.getCategory())
+                .orElseGet(() -> {
+                    Category newCategory = new Category();
+                    newCategory.setName(dto.getCategory());
+                    return categoryRepository.save(newCategory);
+                });
+
+        // 3. Sobrescribir los datos del producto con los nuevos valores
+        product.setSku(dto.getSku());
+        product.setPrice(dto.getPrice());
+        product.setBarCode(dto.getBarCode());
+        product.setProductName(dto.getProductName());
+        product.setWeight(dto.getWeight());
+        product.setBrand(brand);
+        product.setCategory(category);
+
+        // 4. Al ser una modificación permanente, se cancela cualquier promoción activa
+        // para que el precio nuevo no sea revertido por revertirPromocionesVencidas()
+        product.setPromo(false);
+        product.setOriginalPrice(null);
+        product.setPromoEndsAt(null);
+
+        // 5. Guardar en BD
+        Product updatedProduct = productRepository.save(product);
+
+        // 6. Notificar a MQTT que el producto fue actualizado
+        notificarMQTT(updatedProduct);
+
+        return updatedProduct;
+    }
+
     @Transactional
     public void applyDiscountByBrand(String brandName, BigDecimal discountPercentage, Long durationMinutes) {
         List<Product> products = productRepository.findByBrand_Name(brandName);
