@@ -9,6 +9,7 @@ import com.uco.productAdmin.repository.CategoryRepository;
 import com.uco.productAdmin.repository.ProductRepository;
 import com.uco.productAdmin.mqtt.MqttPub; // <-- Importación de tu clase MQTT
 import lombok.RequiredArgsConstructor;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,6 +17,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -38,13 +40,15 @@ public class ProductService {
                         "  \"price\": \"%s\",\n" +
                         "  \"barCode\": \"%s\",\n" +
                         "  \"productName\": \"%s\",\n" +
-                        "  \"date\": \"%s\"\n" +
+                        "  \"date\": \"%s\",\n" +
+                        "  \"promo\": \"%s\"\n" +
                         "}",
                 String.valueOf(product.getSku()),
                 formatPriceCOP(product.getPrice()), // Llamamos al nuevo formateador
                 String.valueOf(product.getBarCode()),
                 product.getProductName(),
-                product.getLastModifiedDate() != null ? product.getLastModifiedDate() : "N/A"
+                product.getLastModifiedDate() != null ? product.getLastModifiedDate() : "N/A",
+                String.valueOf(Boolean.TRUE.equals(product.getPromo()))
         );
 
         // El tópico ahora es solo la categoría
@@ -104,6 +108,7 @@ public class ProductService {
         product.setWeight(dto.getWeight());
         product.setBrand(brand);
         product.setCategory(category);
+        product.setPromo(false);
 
         // 4. Guardar en BD
         Product savedProduct = productRepository.save(product);
@@ -115,21 +120,47 @@ public class ProductService {
     }
 
     @Transactional
-    public void applyDiscountByBrand(String brandName, BigDecimal discountPercentage) {
+    public void applyDiscountByBrand(String brandName, BigDecimal discountPercentage, Long durationMinutes) {
         List<Product> products = productRepository.findByBrand_Name(brandName);
 
         if (products.isEmpty()) {
             throw new RuntimeException("No se encontraron productos para la marca: " + brandName);
         }
 
+        applyDiscount(products, discountPercentage, durationMinutes);
+    }
+
+    @Transactional
+    public void applyDiscountByCategory(String categoryName, BigDecimal discountPercentage, Long durationMinutes) {
+        List<Product> products = productRepository.findByCategory_Name(categoryName);
+
+        if (products.isEmpty()) {
+            throw new RuntimeException("No se encontraron productos para la categoría: " + categoryName);
+        }
+
+        applyDiscount(products, discountPercentage, durationMinutes);
+    }
+
+    // --- Aplica el descuento, marca la promo como activa y programa su vencimiento ---
+    private void applyDiscount(List<Product> products, BigDecimal discountPercentage, Long durationMinutes) {
         BigDecimal divisor = new BigDecimal("100");
         BigDecimal discount = discountPercentage.divide(divisor, 2, RoundingMode.HALF_UP);
         BigDecimal multiplier = BigDecimal.ONE.subtract(discount);
+        LocalDateTime promoEndsAt = LocalDateTime.now().plusMinutes(durationMinutes);
 
         products.forEach(product -> {
-            BigDecimal newPrice = product.getPrice().multiply(multiplier);
-            newPrice = newPrice.setScale(0, RoundingMode.HALF_UP);
+            // Si ya hay una promo activa usamos el precio original guardado como base,
+            // para no encadenar descuentos sobre un precio ya rebajado.
+            BigDecimal basePrice = Boolean.TRUE.equals(product.getPromo()) && product.getOriginalPrice() != null
+                    ? product.getOriginalPrice()
+                    : product.getPrice();
+
+            BigDecimal newPrice = basePrice.multiply(multiplier).setScale(0, RoundingMode.HALF_UP);
+
+            product.setOriginalPrice(basePrice);
             product.setPrice(newPrice);
+            product.setPromo(true);
+            product.setPromoEndsAt(promoEndsAt);
         });
 
         // Guardamos los cambios en BD
@@ -139,28 +170,25 @@ public class ProductService {
         savedProducts.forEach(this::notificarMQTT);
     }
 
+    // --- Revisa periódicamente las promociones vencidas y restaura el precio original ---
+    @Scheduled(fixedRate = 60000)
     @Transactional
-    public void applyDiscountByCategory(String categoryName, BigDecimal discountPercentage) {
-        List<Product> products = productRepository.findByCategory_Name(categoryName);
+    public void revertirPromocionesVencidas() {
+        List<Product> vencidos = productRepository.findByPromoTrueAndPromoEndsAtBefore(LocalDateTime.now());
 
-        if (products.isEmpty()) {
-            throw new RuntimeException("No se encontraron productos para la categoría: " + categoryName);
+        if (vencidos.isEmpty()) {
+            return;
         }
 
-        BigDecimal divisor = new BigDecimal("100");
-        BigDecimal discount = discountPercentage.divide(divisor, 2, RoundingMode.HALF_UP);
-        BigDecimal multiplier = BigDecimal.ONE.subtract(discount);
-
-        products.forEach(product -> {
-            BigDecimal newPrice = product.getPrice().multiply(multiplier);
-            newPrice = newPrice.setScale(0, RoundingMode.HALF_UP);
-            product.setPrice(newPrice);
+        vencidos.forEach(product -> {
+            product.setPrice(product.getOriginalPrice());
+            product.setPromo(false);
+            product.setOriginalPrice(null);
+            product.setPromoEndsAt(null);
         });
 
-        // Guardamos los cambios en BD
-        List<Product> savedProducts = productRepository.saveAll(products);
+        List<Product> savedProducts = productRepository.saveAll(vencidos);
 
-        // Notificamos a MQTT
         savedProducts.forEach(this::notificarMQTT);
     }
 

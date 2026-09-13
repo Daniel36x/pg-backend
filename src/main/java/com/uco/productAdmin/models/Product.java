@@ -33,6 +33,18 @@ public class Product {
     @Column(name = "last_modified_date")
     private String lastModifiedDate;
 
+    // Indica si el producto tiene una promoción/descuento activo
+    @Column(name = "promo")
+    private Boolean promo = false;
+
+    // Precio original antes de aplicar la promoción, para poder revertirlo al vencer
+    @Column(name = "original_price", precision = 12, scale = 2)
+    private BigDecimal originalPrice;
+
+    // Momento en el que la promoción vence y el precio debe volver al original
+    @Column(name = "promo_ends_at")
+    private LocalDateTime promoEndsAt;
+
     @ManyToOne(cascade = CascadeType.PERSIST)
     @JoinColumn(name = "brand_id")
     private Brand brand;

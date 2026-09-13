@@ -30,20 +30,24 @@ public class ProductController {
     @PatchMapping("/discount")
     public ResponseEntity<String> applyDiscount(
             @RequestParam("brand") String brand,
-            @RequestParam("percentage") BigDecimal percentage) {
+            @RequestParam("percentage") BigDecimal percentage,
+            @RequestParam("durationMinutes") Long durationMinutes) {
 
-        productService.applyDiscountByBrand(brand, percentage);
-        return ResponseEntity.ok("Descuento del " + percentage + "% aplicado a la marca " + brand);
+        productService.applyDiscountByBrand(brand, percentage, durationMinutes);
+        return ResponseEntity.ok("Descuento del " + percentage + "% aplicado a la marca " + brand
+                + " durante " + durationMinutes + " minutos");
     }
 
     // 3. Aplicar descuento por categoría (PATCH)
     @PatchMapping("/discount/category")
     public ResponseEntity<String> applyDiscountByCategory(
             @RequestParam("category") String category,
-            @RequestParam("percentage") BigDecimal percentage) {
+            @RequestParam("percentage") BigDecimal percentage,
+            @RequestParam("durationMinutes") Long durationMinutes) {
 
-        productService.applyDiscountByCategory(category, percentage);
-        return ResponseEntity.ok("Descuento del " + percentage + "% aplicado a la categoría " + category);
+        productService.applyDiscountByCategory(category, percentage, durationMinutes);
+        return ResponseEntity.ok("Descuento del " + percentage + "% aplicado a la categoría " + category
+                + " durante " + durationMinutes + " minutos");
     }
 
     // 4. Obtener todos los productos (GET)
