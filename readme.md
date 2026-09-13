@@ -213,6 +213,13 @@ Consola web de la base de datos H2 en memoria. Expuesta sin autenticación y con
 - `JwtAccessDeniedHandler` (+ `GlobalExceptionHandler` para `AccessDeniedException`) → `403` con JSON uniforme cuando el usuario está autenticado pero no tiene el rol requerido.
 - `GlobalExceptionHandler` también normaliza `InvalidCredentialsException` (401), `UserAlreadyExistsException` (409) y cualquier otra `RuntimeException` de negocio (404), evitando exponer *stack traces*.
 
+### CORS
+
+- Configurado explícitamente en `SecurityConfig` (bean `CorsConfigurationSource`), aplicado a `/**`.
+- Orígenes permitidos vienen de `app.cors.allowed-origins` (lista separada por coma, por defecto `http://localhost:*,http://127.0.0.1:*` — solo desarrollo). **En producción hay que sobreescribir `CORS_ALLOWED_ORIGINS` con el/los dominio(s) reales del frontend**, igual que se hace con `JWT_SECRET`.
+- Métodos permitidos: `GET, POST, PUT, PATCH, DELETE, OPTIONS`; headers permitidos: todos (`*`).
+- `allowCredentials(false)`: no se envían/aceptan cookies en las peticiones cross-origin, consistente con que la API es stateless y se autentica solo con el header `Authorization: Bearer <token>` (no hace falta exponer credenciales de navegador).
+
 ### Contraseñas
 
 - Hasheadas con **BCrypt** (`BCryptPasswordEncoder`), nunca se almacenan ni se devuelven en texto plano.
@@ -228,7 +235,7 @@ Consola web de la base de datos H2 en memoria. Expuesta sin autenticación y con
 1. **Secreto JWT y credenciales de admin en el repo**: `application.properties` trae valores por defecto para `jwt.secret`, `DEFAULT_ADMIN_USER` y `DEFAULT_ADMIN_PASSWORD`. Deben sobreescribirse siempre vía variables de entorno y rotarse; no deberían tener un valor por defecto funcional en el código versionado.
 2. **CSRF deshabilitado**: aceptable para una API stateless consumida por clientes no-browser (SPA/servicios) que usan Bearer token en vez de cookies; si en algún momento se introduce autenticación por cookie, debe reevaluarse.
 3. **Consola H2 expuesta** (`/h2-console/**` público, `frameOptions` deshabilitado): solo debe habilitarse en desarrollo. En producción, `spring.h2.console.enabled` debería ser `false` y la ruta debe quedar protegida o eliminada.
-4. **Sin CORS configurado explícitamente**: no hay una política de CORS definida; si un frontend en otro origen consume la API, habrá que añadir una configuración explícita (evitar `*` con credenciales).
+4. **CORS restringido a localhost por defecto**: `app.cors.allowed-origins` trae de fábrica solo `http://localhost:*` y `http://127.0.0.1:*` (ver sección [CORS](#cors)); antes de desplegar hay que sobreescribir `CORS_ALLOWED_ORIGINS` con el dominio real del frontend, o las peticiones cross-origin serán bloqueadas por el navegador.
 5. **Sin rate limiting / bloqueo de cuenta** en `/auth/login` ni `/auth/register`: expuesto a fuerza bruta y enumeración de usuarios (aunque el mensaje de error de login es genérico, `register` sí revela con 409 si un username ya existe).
 6. **MQTT sin TLS ni autenticación**: `MqttPub` se conecta a `tcp://192.168.110.229` (broker Mosquitto) sin usuario/contraseña ni TLS, y la IP del broker está *hardcodeada* en el código fuente. Los mensajes publicados (precio, SKU, nombre de producto) viajan en claro. Recomendado: usar `ssl://`, credenciales de broker, y mover el broker a configuración externa (`application.properties` / variables de entorno).
 7. **JWT no incluye claim de rol**: por diseño consulta el rol en cada request (más seguro ante cambios de rol), pero implica una consulta a BD por cada request autenticada; si se optimiza incluyendo el rol en el token, hay que invalidar tokens en cambios de rol.
@@ -248,6 +255,7 @@ Consola web de la base de datos H2 en memoria. Expuesta sin autenticación y con
 | `jwt.expiration-ms` | `86400000` (24h) | Expiración del token |
 | `app.security.default-admin.username` | `${DEFAULT_ADMIN_USER:admin}` | Usuario admin creado al arrancar |
 | `app.security.default-admin.password` | `${DEFAULT_ADMIN_PASSWORD:Admin123!}` | Password admin creado al arrancar — **sobreescribir en prod** |
+| `app.cors.allowed-origins` | `${CORS_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*}` | Orígenes permitidos por CORS, separados por coma — **sobreescribir en prod** con el dominio del frontend |
 
 ## Ejecución local
 
