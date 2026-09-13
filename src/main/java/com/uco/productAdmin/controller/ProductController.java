@@ -28,9 +28,9 @@ public class ProductController {
         return new ResponseEntity<>(createdProduct, HttpStatus.CREATED);
     }
 
-    // 2. Aplicar descuento por marca (PATCH) - Solo ADMIN
+    // 2. Aplicar descuento por marca (PATCH) - ADMIN o EMPLEADO
     @PatchMapping("/discount")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'EMPLEADO')")
     public ResponseEntity<String> applyDiscount(
             @RequestParam("brand") String brand,
             @RequestParam("percentage") BigDecimal percentage,
@@ -41,9 +41,9 @@ public class ProductController {
                 + " durante " + durationMinutes + " minutos");
     }
 
-    // 3. Aplicar descuento por categoría (PATCH) - Solo ADMIN
+    // 3. Aplicar descuento por categoría (PATCH) - ADMIN o EMPLEADO
     @PatchMapping("/discount/category")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'EMPLEADO')")
     public ResponseEntity<String> applyDiscountByCategory(
             @RequestParam("category") String category,
             @RequestParam("percentage") BigDecimal percentage,
@@ -54,9 +54,9 @@ public class ProductController {
                 + " durante " + durationMinutes + " minutos");
     }
 
-    // 4. Actualizar un producto de forma permanente por ID (PUT) - Solo ADMIN
+    // 4. Actualizar un producto de forma permanente por ID (PUT) - ADMIN o EMPLEADO
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'EMPLEADO')")
     public ResponseEntity<Product> updateProduct(
             @PathVariable("id") Long id,
             @Valid @RequestBody ProductRequestDTO productDTO) {
@@ -64,17 +64,17 @@ public class ProductController {
         return ResponseEntity.ok(updatedProduct);
     }
 
-    // 5. Obtener todos los productos (GET) - ADMIN o USER autenticados
+    // 5. Obtener todos los productos (GET) - ADMIN o EMPLEADO autenticados
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'USER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'EMPLEADO')")
     public ResponseEntity<List<Product>> getAllProducts() {
         List<Product> products = productService.getAllProducts();
         return ResponseEntity.ok(products);
     }
 
-    // 6. Obtener un producto por ID (GET) - ADMIN o USER autenticados
+    // 6. Obtener un producto por ID (GET) - ADMIN o EMPLEADO autenticados
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'USER')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'EMPLEADO')")
     public ResponseEntity<Product> getProductById(@PathVariable("id") Long id) {
         Product product = productService.getProductById(id);
         return ResponseEntity.ok(product);

@@ -17,7 +17,7 @@ public class AuthController {
 
     private final AuthService authService;
 
-    // Registro público: siempre crea usuarios con rol USER
+    // Registro público: siempre crea usuarios con rol EMPLEADO
     @PostMapping("/register")
     public ResponseEntity<AuthResponseDTO> register(@Valid @RequestBody RegisterRequestDTO dto) {
         AuthResponseDTO response = authService.register(dto);

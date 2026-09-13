@@ -69,11 +69,11 @@ ProductService también publica eventos hacia:
 - **`repository/`** — interfaces `JpaRepository`.
 - **`exceptions/`** — `InvalidCredentialsException`, `UserAlreadyExistsException`.
 - **`mqtt/`** — `MqttPub` (publicador usado por `ProductService`) y `MqttSubAlimentos` / `MqttSubDomestico` (clientes `main()` de ejemplo para suscribirse a tópicos, no forman parte del arranque de Spring).
-- **`config/AdminUserSeeder`** — `CommandLineRunner` que crea un usuario `ADMIN` al arrancar si no existe (el registro público solo permite crear rol `USER`).
+- **`config/AdminUserSeeder`** — `CommandLineRunner` que crea un usuario `ADMIN` al arrancar si no existe (el registro público solo permite crear rol `EMPLEADO`).
 
 ### Modelo de datos
 
-- **User**: `id`, `username` (único), `password` (hash BCrypt), `role` (`ADMIN` | `USER`). Implementa `UserDetails`.
+- **User**: `id`, `username` (único), `password` (hash BCrypt), `role` (`ADMIN` | `EMPLEADO`). Implementa `UserDetails`.
 - **Product**: `id`, `sku`, `barCode`, `productName`, `price`, `weight`, `brand` (→ Brand), `category` (→ Category), `lastModifiedDate` (auto en `@PrePersist`/`@PreUpdate`), y campos de promoción: `promo`, `originalPrice`, `promoEndsAt`.
 - **Brand** / **Category**: catálogos simples (`id`, `name` único), se crean automáticamente si no existen al registrar un producto.
 
@@ -84,13 +84,30 @@ ProductService también publica eventos hacia:
 
 ---
 
+## Roles y permisos
+
+Hay dos roles (`Role` enum): `ADMIN` y `EMPLEADO`.
+
+- **`ADMIN`**: acceso total — puede crear productos, modificarlos por completo, aplicar/crear promociones (descuentos por marca o categoría) y consultarlos.
+- **`EMPLEADO`**: rol operativo, limitado a **cambiar precios** (vía `PUT /products/{id}`) y **crear promociones por marca o por categoría**; también puede consultar productos (`GET`) para saber qué precios/promos aplicar. **No puede crear productos nuevos** (`POST /products` sigue siendo exclusivo de `ADMIN`).
+- El registro público (`POST /api/v1/auth/register`) **siempre** crea usuarios con rol `EMPLEADO`; el único `ADMIN` que existe por defecto es el creado por `AdminUserSeeder` al arrancar (ver [Usuario administrador por defecto](#usuario-administrador-por-defecto)).
+
+| Endpoint | ADMIN | EMPLEADO |
+|---|---|---|
+| `POST /api/v1/auth/register` / `login` | ✅ (público) | ✅ (público) |
+| `POST /api/v1/products` (crear producto) | ✅ | ❌ |
+| `PUT /api/v1/products/{id}` (modificar producto / precio) | ✅ | ✅ |
+| `PATCH /api/v1/products/discount` (promoción por marca) | ✅ | ✅ |
+| `PATCH /api/v1/products/discount/category` (promoción por categoría) | ✅ | ✅ |
+| `GET /api/v1/products` / `GET /api/v1/products/{id}` | ✅ | ✅ |
+
 ## Endpoints
 
 Prefijo base: `/api/v1`.
 
 ### `POST /api/v1/auth/register` — público
 
-Crea un usuario nuevo. **Siempre** con rol `USER` (no es posible crear `ADMIN` por esta vía).
+Crea un usuario nuevo. **Siempre** con rol `EMPLEADO` (no es posible crear `ADMIN` por esta vía).
 
 - Body:
   ```json
@@ -118,23 +135,23 @@ Crea un producto (crea marca/categoría si no existen) y notifica por MQTT.
 - Body (`ProductRequestDTO`): `sku`, `price`, `barCode`, `productName`, `brand`, `weight`, `category` (todos obligatorios, validados con `@NotNull`/`@NotBlank`).
 - Respuestas: `201 Created` con el `Product` creado; `403` si no es ADMIN; `401` si no hay token/token inválido; `400` si falla validación.
 
-### `PATCH /api/v1/products/discount` — requiere rol `ADMIN`
+### `PATCH /api/v1/products/discount` — requiere rol `ADMIN` o `EMPLEADO`
 
-Aplica un descuento porcentual temporal a todos los productos de una marca.
+Aplica un descuento porcentual temporal a todos los productos de una marca (crea una promoción por marca).
 
 - Query params: `brand` (String), `percentage` (BigDecimal), `durationMinutes` (Long).
 - El precio original se guarda para poder revertir automáticamente cuando expira `durationMinutes`.
 - Respuestas: `200 OK` (texto plano de confirmación); `404`/`400` si la marca no tiene productos (excepción genérica mapeada por `GlobalExceptionHandler`); `403`/`401` según el caso.
 
-### `PATCH /api/v1/products/discount/category` — requiere rol `ADMIN`
+### `PATCH /api/v1/products/discount/category` — requiere rol `ADMIN` o `EMPLEADO`
 
-Igual que el anterior pero filtrando por `category` en vez de `brand`.
+Igual que el anterior pero filtrando por `category` en vez de `brand` (crea una promoción por categoría).
 
-### `PUT /api/v1/products/{id}` — requiere rol `ADMIN`
+### `PUT /api/v1/products/{id}` — requiere rol `ADMIN` o `EMPLEADO`
 
 Modifica un producto existente **de forma permanente** (reemplaza todos sus datos), a diferencia de los endpoints de descuento que son temporales y se revierten solos.
 
-- Header requerido: `Authorization: Bearer <token>` (rol `ADMIN`).
+- Header requerido: `Authorization: Bearer <token>` (rol `ADMIN` o `EMPLEADO`) — es la vía habilitada para que `EMPLEADO` modifique precios.
 - Body (`ProductRequestDTO`): mismos campos que la creación, todos obligatorios — es un reemplazo completo, no parcial: hay que enviar todos los campos aunque no cambien.
   ```json
   {
@@ -159,11 +176,11 @@ Modifica un producto existente **de forma permanente** (reemplaza todos sus dato
 - Notifica el cambio por MQTT igual que el resto de mutaciones.
 - Respuestas: `200 OK` con el `Product` actualizado; `404` si el ID no existe; `403`/`401` según el caso; `400` si falla la validación.
 
-### `GET /api/v1/products` — requiere rol `ADMIN` o `USER`
+### `GET /api/v1/products` — requiere rol `ADMIN` o `EMPLEADO`
 
 Lista todos los productos. Cualquier usuario autenticado (sin importar el rol) puede consultarlos.
 
-### `GET /api/v1/products/{id}` — requiere rol `ADMIN` o `USER`
+### `GET /api/v1/products/{id}` — requiere rol `ADMIN` o `EMPLEADO`
 
 Obtiene un producto por ID. `404` si no existe (vía `RuntimeException` → `GlobalExceptionHandler`).
 
@@ -186,8 +203,8 @@ Consola web de la base de datos H2 en memoria. Expuesta sin autenticación y con
 
 ### Autorización: roles y `@PreAuthorize`
 
-- Dos roles: `ADMIN` y `USER` (`Role` enum), mapeados a `ROLE_ADMIN` / `ROLE_USER` como `GrantedAuthority`.
-- `@EnableMethodSecurity` + `@PreAuthorize("hasRole('ADMIN')")` / `hasAnyRole('ADMIN','USER')` en cada endpoint de `ProductController` (autorización a nivel de método, no solo por ruta).
+- Dos roles: `ADMIN` y `EMPLEADO` (`Role` enum), mapeados a `ROLE_ADMIN` / `ROLE_EMPLEADO` como `GrantedAuthority`.
+- `@EnableMethodSecurity` + `@PreAuthorize("hasRole('ADMIN')")` (solo `POST /products`) / `hasAnyRole('ADMIN','EMPLEADO')` (resto de endpoints de productos) en cada método de `ProductController` (autorización a nivel de método, no solo por ruta). Ver la matriz completa en [Roles y permisos](#roles-y-permisos).
 - Reglas a nivel de `HttpSecurity`: `/api/v1/auth/**` y `/h2-console/**` públicas; **todo lo demás requiere estar autenticado** (`anyRequest().authenticated()`), y luego `@PreAuthorize` añade el control fino por rol.
 
 ### Manejo de errores de seguridad
@@ -215,6 +232,7 @@ Consola web de la base de datos H2 en memoria. Expuesta sin autenticación y con
 5. **Sin rate limiting / bloqueo de cuenta** en `/auth/login` ni `/auth/register`: expuesto a fuerza bruta y enumeración de usuarios (aunque el mensaje de error de login es genérico, `register` sí revela con 409 si un username ya existe).
 6. **MQTT sin TLS ni autenticación**: `MqttPub` se conecta a `tcp://192.168.110.229` (broker Mosquitto) sin usuario/contraseña ni TLS, y la IP del broker está *hardcodeada* en el código fuente. Los mensajes publicados (precio, SKU, nombre de producto) viajan en claro. Recomendado: usar `ssl://`, credenciales de broker, y mover el broker a configuración externa (`application.properties` / variables de entorno).
 7. **JWT no incluye claim de rol**: por diseño consulta el rol en cada request (más seguro ante cambios de rol), pero implica una consulta a BD por cada request autenticada; si se optimiza incluyendo el rol en el token, hay que invalidar tokens en cambios de rol.
+8. **`EMPLEADO` puede modificar más que solo el precio**: `PUT /api/v1/products/{id}` es un reemplazo completo del producto (`ProductRequestDTO`), así que un `EMPLEADO` autorizado a "modificar precios" también puede cambiar `productName`, `brand`, `category`, `barCode` y `weight` en la misma llamada. Si se necesita restringir estrictamente a solo el campo `price`, habría que introducir un endpoint dedicado (p. ej. `PATCH /products/{id}/price`) y quitarle a `EMPLEADO` el acceso al `PUT` completo, dejándolo solo para `ADMIN`.
 
 ---
 

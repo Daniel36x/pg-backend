@@ -11,7 +11,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 // Crea un usuario ADMIN por defecto al arrancar, ya que el registro público
-// (/api/v1/auth/register) solo puede crear usuarios con rol USER.
+// (/api/v1/auth/register) solo puede crear usuarios con rol EMPLEADO.
 @Component
 @RequiredArgsConstructor
 @Slf4j
