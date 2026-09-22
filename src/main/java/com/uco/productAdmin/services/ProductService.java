@@ -156,8 +156,9 @@ public class ProductService {
         product.setOriginalPrice(null);
         product.setPromoEndsAt(null);
 
-        // 5. Guardar en BD
-        Product updatedProduct = productRepository.save(product);
+        // 5. Guardar en BD (flush inmediato para que el @PreUpdate refresque lastModifiedDate
+        // antes de leerlo al construir el JSON de MQTT; si no, se publicaría la fecha anterior)
+        Product updatedProduct = productRepository.saveAndFlush(product);
 
         // 6. Notificar a MQTT que el producto fue actualizado
         notificarMQTT(updatedProduct);
@@ -166,25 +167,49 @@ public class ProductService {
     }
 
     @Transactional
-    public void applyDiscountByBrand(String brandName, BigDecimal discountPercentage, Long durationMinutes) {
+    public void applyDiscountByBrand(String brandName, BigDecimal discountPercentage, Long durationMinutes, LocalDateTime startDate) {
         List<Product> products = productRepository.findByBrand_Name(brandName);
 
         if (products.isEmpty()) {
             throw new RuntimeException("No se encontraron productos para la marca: " + brandName);
         }
 
-        applyDiscount(products, discountPercentage, durationMinutes);
+        scheduleOrApplyDiscount(products, discountPercentage, durationMinutes, startDate);
     }
 
     @Transactional
-    public void applyDiscountByCategory(String categoryName, BigDecimal discountPercentage, Long durationMinutes) {
+    public void applyDiscountByCategory(String categoryName, BigDecimal discountPercentage, Long durationMinutes, LocalDateTime startDate) {
         List<Product> products = productRepository.findByCategory_Name(categoryName);
 
         if (products.isEmpty()) {
             throw new RuntimeException("No se encontraron productos para la categoría: " + categoryName);
         }
 
-        applyDiscount(products, discountPercentage, durationMinutes);
+        scheduleOrApplyDiscount(products, discountPercentage, durationMinutes, startDate);
+    }
+
+    @Transactional
+    public void applyDiscountBySku(Long sku, BigDecimal discountPercentage, Long durationMinutes, LocalDateTime startDate) {
+        Product product = productRepository.findBySku(sku)
+                .orElseThrow(() -> new RuntimeException("No se encontró el producto con el SKU: " + sku));
+
+        scheduleOrApplyDiscount(List.of(product), discountPercentage, durationMinutes, startDate);
+    }
+
+    // --- Decide si el descuento se aplica de inmediato o se deja programado para una fecha futura ---
+    private void scheduleOrApplyDiscount(List<Product> products, BigDecimal discountPercentage, Long durationMinutes, LocalDateTime startDate) {
+        if (startDate == null || !startDate.isAfter(LocalDateTime.now())) {
+            applyDiscount(products, discountPercentage, durationMinutes);
+            return;
+        }
+
+        products.forEach(product -> {
+            product.setScheduledDiscountPercentage(discountPercentage);
+            product.setScheduledDurationMinutes(durationMinutes);
+            product.setPromoStartsAt(startDate);
+        });
+
+        productRepository.saveAll(products);
     }
 
     // --- Aplica el descuento, marca la promo como activa y programa su vencimiento ---
@@ -209,11 +234,43 @@ public class ProductService {
             product.setPromoEndsAt(promoEndsAt);
         });
 
-        // Guardamos los cambios en BD
-        List<Product> savedProducts = productRepository.saveAll(products);
+        // Guardamos los cambios en BD (flush inmediato para que @PreUpdate refresque
+        // lastModifiedDate antes de leerlo al construir el JSON de MQTT)
+        List<Product> savedProducts = productRepository.saveAllAndFlush(products);
 
         // Notificamos a MQTT
         savedProducts.forEach(this::notificarMQTT);
+    }
+
+    // --- Revisa periódicamente los descuentos programados y activa los que ya llegaron a su fecha de inicio ---
+    @Scheduled(fixedRate = 60000)
+    @Transactional
+    public void activarDescuentosProgramados() {
+        List<Product> programados = productRepository.findByPromoStartsAtNotNullAndPromoStartsAtLessThanEqual(LocalDateTime.now());
+
+        if (programados.isEmpty()) {
+            return;
+        }
+
+        programados.forEach(product -> {
+            BigDecimal percentage = product.getScheduledDiscountPercentage();
+            Long durationMinutes = product.getScheduledDurationMinutes();
+
+            product.setPromoStartsAt(null);
+            product.setScheduledDiscountPercentage(null);
+            product.setScheduledDurationMinutes(null);
+
+            applyDiscount(List.of(product), percentage, durationMinutes);
+        });
+    }
+
+    // --- Elimina de forma permanente un producto identificado por su SKU ---
+    @Transactional
+    public void deleteProductBySku(Long sku) {
+        Product product = productRepository.findBySku(sku)
+                .orElseThrow(() -> new RuntimeException("No se encontró el producto con el SKU: " + sku));
+
+        productRepository.delete(product);
     }
 
     // --- Revisa periódicamente las promociones vencidas y restaura el precio original ---
@@ -233,7 +290,7 @@ public class ProductService {
             product.setPromoEndsAt(null);
         });
 
-        List<Product> savedProducts = productRepository.saveAll(vencidos);
+        List<Product> savedProducts = productRepository.saveAllAndFlush(vencidos);
 
         savedProducts.forEach(this::notificarMQTT);
     }

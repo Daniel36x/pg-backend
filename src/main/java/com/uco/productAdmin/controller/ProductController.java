@@ -5,12 +5,14 @@ import com.uco.productAdmin.models.Product;
 import com.uco.productAdmin.services.ProductService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List; // Importante para el método getAllProducts
 
 @RestController
@@ -34,11 +36,12 @@ public class ProductController {
     public ResponseEntity<String> applyDiscount(
             @RequestParam("brand") String brand,
             @RequestParam("percentage") BigDecimal percentage,
-            @RequestParam("durationMinutes") Long durationMinutes) {
+            @RequestParam("durationMinutes") Long durationMinutes,
+            @RequestParam(value = "startDate", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startDate) {
 
-        productService.applyDiscountByBrand(brand, percentage, durationMinutes);
-        return ResponseEntity.ok("Descuento del " + percentage + "% aplicado a la marca " + brand
-                + " durante " + durationMinutes + " minutos");
+        productService.applyDiscountByBrand(brand, percentage, durationMinutes, startDate);
+        return ResponseEntity.ok(buildDiscountMessage("la marca " + brand, percentage, durationMinutes, startDate));
     }
 
     // 3. Aplicar descuento por categoría (PATCH) - ADMIN o EMPLEADO
@@ -47,11 +50,36 @@ public class ProductController {
     public ResponseEntity<String> applyDiscountByCategory(
             @RequestParam("category") String category,
             @RequestParam("percentage") BigDecimal percentage,
-            @RequestParam("durationMinutes") Long durationMinutes) {
+            @RequestParam("durationMinutes") Long durationMinutes,
+            @RequestParam(value = "startDate", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startDate) {
 
-        productService.applyDiscountByCategory(category, percentage, durationMinutes);
-        return ResponseEntity.ok("Descuento del " + percentage + "% aplicado a la categoría " + category
-                + " durante " + durationMinutes + " minutos");
+        productService.applyDiscountByCategory(category, percentage, durationMinutes, startDate);
+        return ResponseEntity.ok(buildDiscountMessage("la categoría " + category, percentage, durationMinutes, startDate));
+    }
+
+    // 4b. Aplicar descuento por SKU (PATCH) - ADMIN o EMPLEADO
+    @PatchMapping("/discount/sku")
+    @PreAuthorize("hasAnyRole('ADMIN', 'EMPLEADO')")
+    public ResponseEntity<String> applyDiscountBySku(
+            @RequestParam("sku") Long sku,
+            @RequestParam("percentage") BigDecimal percentage,
+            @RequestParam("durationMinutes") Long durationMinutes,
+            @RequestParam(value = "startDate", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startDate) {
+
+        productService.applyDiscountBySku(sku, percentage, durationMinutes, startDate);
+        return ResponseEntity.ok(buildDiscountMessage("el SKU " + sku, percentage, durationMinutes, startDate));
+    }
+
+    // --- Construye el mensaje de confirmación, indicando si el descuento se aplicó ya o quedó programado ---
+    private String buildDiscountMessage(String target, BigDecimal percentage, Long durationMinutes, LocalDateTime startDate) {
+        if (startDate != null && startDate.isAfter(LocalDateTime.now())) {
+            return "Descuento del " + percentage + "% programado para " + target
+                    + " a partir del " + startDate + ", activo durante " + durationMinutes + " minutos";
+        }
+        return "Descuento del " + percentage + "% aplicado a " + target
+                + " durante " + durationMinutes + " minutos";
     }
 
     // 4. Actualizar un producto de forma permanente por ID (PUT) - ADMIN o EMPLEADO
@@ -78,5 +106,13 @@ public class ProductController {
     public ResponseEntity<Product> getProductById(@PathVariable("id") Long id) {
         Product product = productService.getProductById(id);
         return ResponseEntity.ok(product);
+    }
+
+    // 7. Eliminar un producto de forma permanente por SKU (DELETE) - Solo ADMIN
+    @DeleteMapping("/sku/{sku}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> deleteProductBySku(@PathVariable("sku") Long sku) {
+        productService.deleteProductBySku(sku);
+        return ResponseEntity.noContent().build();
     }
 }

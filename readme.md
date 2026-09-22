@@ -54,7 +54,7 @@ Cliente HTTP
 
 ProductService también publica eventos hacia:
 ┌─────────────────────────┐
-│   MqttPub (publisher)    │ → Broker MQTT tcp://192.168.110.229
+│   MqttPub (publisher)    │ → Broker MQTT (mqtt.broker.url, por defecto tcp://192.168.110.229)
 │   tópico = categoría      │   (p.ej. "domestico", "alimentos")
 └─────────────────────────┘
 ```
@@ -68,19 +68,21 @@ ProductService también publica eventos hacia:
 - **`dto/`** — objetos de entrada/salida validados (`RegisterRequestDTO`, `LoginRequestDTO`, `ProductRequestDTO`, `AuthResponseDTO`).
 - **`repository/`** — interfaces `JpaRepository`.
 - **`exceptions/`** — `InvalidCredentialsException`, `UserAlreadyExistsException`.
-- **`mqtt/`** — `MqttPub` (publicador usado por `ProductService`) y `MqttSubAlimentos` / `MqttSubDomestico` (clientes `main()` de ejemplo para suscribirse a tópicos, no forman parte del arranque de Spring).
+- **`mqtt/`** — `MqttPub` (publicador usado por `ProductService`), `MqttSubAlimentos` / `MqttSubDomestico` (clientes `main()` de ejemplo para suscribirse a tópicos, no forman parte del arranque de Spring) y `MqttBrokerConfig` (única fuente de la URL del broker: lee `MQTT_BROKER_URL` o, si no está definida, `mqtt.broker.url` de `application.properties`; la usan tanto los subscriptores de ejemplo como, indirectamente, `MqttPub` vía `@Value`).
 - **`config/AdminUserSeeder`** — `CommandLineRunner` que crea un usuario `ADMIN` al arrancar si no existe (el registro público solo permite crear rol `EMPLEADO`).
 
 ### Modelo de datos
 
 - **User**: `id`, `username` (único), `password` (hash BCrypt), `role` (`ADMIN` | `EMPLEADO`). Implementa `UserDetails`.
-- **Product**: `id`, `sku`, `barCode`, `productName`, `price`, `weight`, `brand` (→ Brand), `category` (→ Category), `lastModifiedDate` (auto en `@PrePersist`/`@PreUpdate`), y campos de promoción: `promo`, `originalPrice`, `promoEndsAt`.
+- **Product**: `id`, `sku`, `barCode`, `productName`, `price`, `weight`, `brand` (→ Brand), `category` (→ Category), `lastModifiedDate` (auto en `@PrePersist`/`@PreUpdate`), campos de promoción activa: `promo`, `originalPrice`, `promoEndsAt`, y campos de descuento programado (pendiente de activarse): `promoStartsAt`, `scheduledDiscountPercentage`, `scheduledDurationMinutes`.
 - **Brand** / **Category**: catálogos simples (`id`, `name` único), se crean automáticamente si no existen al registrar un producto.
 
 ### Flujo de negocio relevante
 
-- Al crear o modificar un producto (creación, descuento por marca/categoría, reversión de promo), `ProductService` publica un JSON por MQTT en un tópico igual al nombre de la categoría (normalizado en minúsculas y `_`).
-- Un job `@Scheduled(fixedRate = 60000)` (`revertirPromocionesVencidas`) revisa cada minuto los productos con promoción vencida y restaura el precio original.
+- Al crear o modificar un producto (creación, descuento por marca/categoría/SKU, activación/reversión de promo), `ProductService` publica un JSON por MQTT en un tópico igual al nombre de la categoría (normalizado en minúsculas y `_`).
+- Los endpoints de descuento (`/discount`, `/discount/category`, `/discount/sku`) aceptan un `startDate` opcional para **programar** el descuento en vez de aplicarlo de inmediato (ver [Descuentos programados](#descuentos-programados)).
+- Un job `@Scheduled(fixedRate = 60000)` (`activarDescuentosProgramados`) revisa cada minuto los productos con un descuento programado cuya fecha de inicio (`promoStartsAt`) ya se cumplió, y lo activa (aplicando el mismo flujo que un descuento inmediato).
+- Otro job `@Scheduled(fixedRate = 60000)` (`revertirPromocionesVencidas`) revisa cada minuto los productos con promoción **activa** vencida y restaura el precio original.
 
 ---
 
@@ -88,8 +90,8 @@ ProductService también publica eventos hacia:
 
 Hay dos roles (`Role` enum): `ADMIN` y `EMPLEADO`.
 
-- **`ADMIN`**: acceso total — puede crear productos, modificarlos por completo, aplicar/crear promociones (descuentos por marca o categoría) y consultarlos.
-- **`EMPLEADO`**: rol operativo, limitado a **cambiar precios** (vía `PUT /products/{id}`) y **crear promociones por marca o por categoría**; también puede consultar productos (`GET`) para saber qué precios/promos aplicar. **No puede crear productos nuevos** (`POST /products` sigue siendo exclusivo de `ADMIN`).
+- **`ADMIN`**: acceso total — puede crear productos, modificarlos por completo, eliminarlos por SKU, aplicar/programar promociones (descuentos por marca, categoría o SKU) y consultarlos.
+- **`EMPLEADO`**: rol operativo, limitado a **cambiar precios** (vía `PUT /products/{id}`) y **crear/programar promociones por marca, categoría o SKU**; también puede consultar productos (`GET`) para saber qué precios/promos aplicar. **No puede crear productos nuevos** ni **eliminarlos** (`POST /products` y `DELETE /products/sku/{sku}` siguen siendo exclusivos de `ADMIN`).
 - El registro público (`POST /api/v1/auth/register`) **siempre** crea usuarios con rol `EMPLEADO`; el único `ADMIN` que existe por defecto es el creado por `AdminUserSeeder` al arrancar (ver [Usuario administrador por defecto](#usuario-administrador-por-defecto)).
 
 | Endpoint | ADMIN | EMPLEADO |
@@ -99,7 +101,9 @@ Hay dos roles (`Role` enum): `ADMIN` y `EMPLEADO`.
 | `PUT /api/v1/products/{id}` (modificar producto / precio) | ✅ | ✅ |
 | `PATCH /api/v1/products/discount` (promoción por marca) | ✅ | ✅ |
 | `PATCH /api/v1/products/discount/category` (promoción por categoría) | ✅ | ✅ |
+| `PATCH /api/v1/products/discount/sku` (promoción por SKU) | ✅ | ✅ |
 | `GET /api/v1/products` / `GET /api/v1/products/{id}` | ✅ | ✅ |
+| `DELETE /api/v1/products/sku/{sku}` (eliminar producto) | ✅ | ❌ |
 
 ## Endpoints
 
@@ -137,15 +141,36 @@ Crea un producto (crea marca/categoría si no existen) y notifica por MQTT.
 
 ### `PATCH /api/v1/products/discount` — requiere rol `ADMIN` o `EMPLEADO`
 
-Aplica un descuento porcentual temporal a todos los productos de una marca (crea una promoción por marca).
+Aplica (o programa) un descuento porcentual temporal a todos los productos de una marca (crea una promoción por marca).
 
-- Query params: `brand` (String), `percentage` (BigDecimal), `durationMinutes` (Long).
+- Query params: `brand` (String), `percentage` (BigDecimal), `durationMinutes` (Long), `startDate` (opcional, ISO-8601 `yyyy-MM-ddTHH:mm:ss`).
 - El precio original se guarda para poder revertir automáticamente cuando expira `durationMinutes`.
-- Respuestas: `200 OK` (texto plano de confirmación); `404`/`400` si la marca no tiene productos (excepción genérica mapeada por `GlobalExceptionHandler`); `403`/`401` según el caso.
+- Si se envía `startDate` con una fecha futura, el descuento **no se aplica de inmediato**: queda programado y un job lo activa automáticamente al llegar esa fecha (ver [Descuentos programados](#descuentos-programados)).
+- Respuestas: `200 OK` (texto plano de confirmación, indica si se aplicó ya o quedó programado); `404`/`400` si la marca no tiene productos (excepción genérica mapeada por `GlobalExceptionHandler`); `403`/`401` según el caso.
 
 ### `PATCH /api/v1/products/discount/category` — requiere rol `ADMIN` o `EMPLEADO`
 
-Igual que el anterior pero filtrando por `category` en vez de `brand` (crea una promoción por categoría).
+Igual que el anterior pero filtrando por `category` en vez de `brand` (crea una promoción por categoría). También admite `startDate` para programar el descuento.
+
+### `PATCH /api/v1/products/discount/sku` — requiere rol `ADMIN` o `EMPLEADO`
+
+Igual que los anteriores pero filtrando por `sku` (Long) en vez de `brand`/`category`: aplica (o programa) el descuento a un único producto (crea una promoción individual por SKU).
+
+- Query params: `sku` (Long), `percentage` (BigDecimal), `durationMinutes` (Long), `startDate` (opcional, ISO-8601 `yyyy-MM-ddTHH:mm:ss`).
+- Respuestas: `200 OK` (texto plano de confirmación, indica si se aplicó ya o quedó programado); `404`/`400` si no existe un producto con ese SKU (excepción genérica mapeada por `GlobalExceptionHandler`); `403`/`401` según el caso.
+
+#### Descuentos programados
+
+Los tres endpoints de descuento anteriores comparten el mismo mecanismo de programación:
+
+- El parámetro `startDate` es **opcional**. Si se omite, o si se envía una fecha igual o anterior al momento actual, el descuento se aplica **de inmediato** (comportamiento previo, sin cambios).
+- Si `startDate` es una fecha **futura**, el/los producto(s) quedan marcados como "con descuento pendiente" (`promoStartsAt`, `scheduledDiscountPercentage`, `scheduledDurationMinutes`) y **no cambian de precio todavía**; no se notifica por MQTT en este punto.
+- Un job `@Scheduled(fixedRate = 60000)` (`activarDescuentosProgramados`) revisa cada minuto los productos cuyo `promoStartsAt` ya se cumplió: en ese momento aplica el descuento (baja el precio, marca `promo = true`, calcula `promoEndsAt = ahora + durationMinutes`) y limpia los campos de programación. A partir de ahí, la reversión al finalizar `durationMinutes` funciona igual que un descuento aplicado de forma inmediata (job `revertirPromocionesVencidas`).
+- Ejemplo — programar un 20% de descuento en la marca `Diana` a partir del 1 de octubre de 2026 a las 08:00, activo por 120 minutos:
+  ```
+  PATCH /api/v1/products/discount?brand=Diana&percentage=20&durationMinutes=120&startDate=2026-10-01T08:00:00
+  ```
+- Solo puede existir un descuento programado por producto a la vez: si se programa uno nuevo sobre un producto que ya tenía otro pendiente, el más reciente sobrescribe al anterior.
 
 ### `PUT /api/v1/products/{id}` — requiere rol `ADMIN` o `EMPLEADO`
 
@@ -183,6 +208,14 @@ Lista todos los productos. Cualquier usuario autenticado (sin importar el rol) p
 ### `GET /api/v1/products/{id}` — requiere rol `ADMIN` o `EMPLEADO`
 
 Obtiene un producto por ID. `404` si no existe (vía `RuntimeException` → `GlobalExceptionHandler`).
+
+### `DELETE /api/v1/products/sku/{sku}` — requiere rol `ADMIN`
+
+Elimina de forma permanente el producto cuyo `sku` coincide con el valor recibido en la ruta.
+
+- Header requerido: `Authorization: Bearer <token>` (rol `ADMIN`).
+- Respuestas: `204 No Content` si se elimina correctamente; `404` si no existe un producto con ese SKU (`RuntimeException` → `GlobalExceptionHandler`); `403`/`401` según el caso.
+- No notifica por MQTT (el producto deja de existir).
 
 ### `GET /h2-console/**` — público (solo desarrollo)
 
@@ -237,7 +270,7 @@ Consola web de la base de datos H2 en memoria. Expuesta sin autenticación y con
 3. **Consola H2 expuesta** (`/h2-console/**` público, `frameOptions` deshabilitado): solo debe habilitarse en desarrollo. En producción, `spring.h2.console.enabled` debería ser `false` y la ruta debe quedar protegida o eliminada.
 4. **CORS restringido a localhost por defecto**: `app.cors.allowed-origins` trae de fábrica solo `http://localhost:*` y `http://127.0.0.1:*` (ver sección [CORS](#cors)); antes de desplegar hay que sobreescribir `CORS_ALLOWED_ORIGINS` con el dominio real del frontend, o las peticiones cross-origin serán bloqueadas por el navegador.
 5. **Sin rate limiting / bloqueo de cuenta** en `/auth/login` ni `/auth/register`: expuesto a fuerza bruta y enumeración de usuarios (aunque el mensaje de error de login es genérico, `register` sí revela con 409 si un username ya existe).
-6. **MQTT sin TLS ni autenticación**: `MqttPub` se conecta a `tcp://192.168.110.229` (broker Mosquitto) sin usuario/contraseña ni TLS, y la IP del broker está *hardcodeada* en el código fuente. Los mensajes publicados (precio, SKU, nombre de producto) viajan en claro. Recomendado: usar `ssl://`, credenciales de broker, y mover el broker a configuración externa (`application.properties` / variables de entorno).
+6. **MQTT sin TLS ni autenticación**: `MqttPub` se conecta al broker (Mosquitto) configurado en `mqtt.broker.url` (por defecto `tcp://192.168.110.229`, sobreescribible con `MQTT_BROKER_URL`) sin usuario/contraseña ni TLS. Los mensajes publicados (precio, SKU, nombre de producto) viajan en claro. Recomendado: usar `ssl://` y credenciales de broker.
 7. **JWT no incluye claim de rol**: por diseño consulta el rol en cada request (más seguro ante cambios de rol), pero implica una consulta a BD por cada request autenticada; si se optimiza incluyendo el rol en el token, hay que invalidar tokens en cambios de rol.
 8. **`EMPLEADO` puede modificar más que solo el precio**: `PUT /api/v1/products/{id}` es un reemplazo completo del producto (`ProductRequestDTO`), así que un `EMPLEADO` autorizado a "modificar precios" también puede cambiar `productName`, `brand`, `category`, `barCode` y `weight` en la misma llamada. Si se necesita restringir estrictamente a solo el campo `price`, habría que introducir un endpoint dedicado (p. ej. `PATCH /products/{id}/price`) y quitarle a `EMPLEADO` el acceso al `PUT` completo, dejándolo solo para `ADMIN`.
 
@@ -256,6 +289,7 @@ Consola web de la base de datos H2 en memoria. Expuesta sin autenticación y con
 | `app.security.default-admin.username` | `${DEFAULT_ADMIN_USER:admin}` | Usuario admin creado al arrancar |
 | `app.security.default-admin.password` | `${DEFAULT_ADMIN_PASSWORD:Admin123!}` | Password admin creado al arrancar — **sobreescribir en prod** |
 | `app.cors.allowed-origins` | `${CORS_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*}` | Orígenes permitidos por CORS, separados por coma — **sobreescribir en prod** con el dominio del frontend |
+| `mqtt.broker.url` | `tcp://192.168.110.229` | URL del broker MQTT — **único lugar a editar** al cambiar de red (o exportar `MQTT_BROKER_URL`, que tiene prioridad); la leen `MqttPub`, `MqttSubAlimentos` y `MqttSubDomestico` a través de `MqttBrokerConfig` |
 
 ## Ejecución local
 

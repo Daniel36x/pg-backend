@@ -45,6 +45,18 @@ public class Product {
     @Column(name = "promo_ends_at")
     private LocalDateTime promoEndsAt;
 
+    // Momento en el que debe activarse un descuento programado (null si no hay ninguno pendiente)
+    @Column(name = "promo_starts_at")
+    private LocalDateTime promoStartsAt;
+
+    // Porcentaje que se aplicará automáticamente cuando llegue "promoStartsAt"
+    @Column(name = "scheduled_discount_percentage", precision = 5, scale = 2)
+    private BigDecimal scheduledDiscountPercentage;
+
+    // Duración (en minutos) que tendrá la promoción una vez se active en "promoStartsAt"
+    @Column(name = "scheduled_duration_minutes")
+    private Long scheduledDurationMinutes;
+
     @ManyToOne(cascade = CascadeType.PERSIST)
     @JoinColumn(name = "brand_id")
     private Brand brand;

@@ -4,15 +4,17 @@ import org.eclipse.paho.client.mqttv3.IMqttClient;
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
 public class MqttPub {
 
-    // 👉 AHORA RECIBE EL TÓPICO COMO PARÁMETRO
+    @Value("${mqtt.broker.url}")
+    private String broker;
+
     public void publicar(String topic, String jsonPayload) {
         try {
-            String broker = "tcp://192.168.110.229";
             String clientId = MqttClient.generateClientId();
             IMqttClient client = new MqttClient(broker, clientId);
 
@@ -22,7 +24,6 @@ public class MqttPub {
             System.out.println("Conectando al broker...");
             client.connect(options);
 
-            // Quitamos el tópico quemado "ejemplo/test" y usamos el que llega por parámetro
             MqttMessage message = new MqttMessage(jsonPayload.getBytes());
             message.setQos(1);
             message.setRetained(false);

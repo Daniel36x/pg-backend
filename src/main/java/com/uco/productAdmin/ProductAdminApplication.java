@@ -14,7 +14,7 @@ public class ProductAdminApplication {
 
 		ApplicationContext context = SpringApplication.run(ProductAdminApplication.class, args);
 
-		System.out.println("hola mundo");
+		System.out.println("ESL MARKET ADMINISTRATOR INICIADO!!!!");
 
 	}
 

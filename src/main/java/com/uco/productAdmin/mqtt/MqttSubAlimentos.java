@@ -13,7 +13,7 @@ public class MqttSubAlimentos {
 
     public static void main(String[] args) throws Exception {
 
-        String broker = "tcp://192.168.10.89";
+        String broker = MqttBrokerConfig.getBrokerUrl();
         String clientId = MqttClient.generateClientId();
 
         IMqttClient client = new MqttClient(broker, clientId);
